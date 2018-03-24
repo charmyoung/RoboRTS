@@ -10,7 +10,7 @@
   <!-- Run the Stage Simulator -->
   <node pkg="stage_ros" type="stageros" name="stageros" args="$(env ROBORTS_PATH)/tools/simulator/$(arg map).world" respawn="false" >
     <remap from="base_scan" to="scan"/> 
-    <param name="base_watchdog_timeout" value="0.05"/>
+    <param name="base_watchdog_timeout" value="0.01"/>
   </node>
 
   <!-- Run the fake localization -->

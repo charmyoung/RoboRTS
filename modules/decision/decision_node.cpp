@@ -42,6 +42,7 @@ class DecisionNode{
                         local_planner_actionlib_client_("local_planner_node_action",true),
                         localization_actionlib_client_("localization_node_action",true),
                         armor_detection_actionlib_client_("armor_detection_node_action",true),
+                        action_state_(global_planner_actionlib_client_.getState()),
                         new_goal_(false),new_path_(false),
                         decision_state_(rrts::common::IDLE){
     //point mode
@@ -91,6 +92,7 @@ class DecisionNode{
 
   void GoalCallback(const geometry_msgs::PoseStamped::ConstPtr & goal){
     global_planner_goal_.goal = *goal;
+
     new_goal_ = true;
   }
 
@@ -131,7 +133,15 @@ class DecisionNode{
 
         local_planner_actionlib_client_.sendGoal(local_planner_goal_);
         new_path_ = false;
+
       }
+
+      actionlib::SimpleClientGoalState action_state=global_planner_actionlib_client_.getState();
+      if(action_state_ !=action_state){
+        action_state_=action_state;
+        std::cout<<"***:"<<action_state_.toString()<<std::endl;
+      }
+
     }
 
   }
@@ -192,6 +202,7 @@ class DecisionNode{
 
   std::vector<std::vector<float>> patrol_points_;
   rrts::common::NodeState decision_state_;
+  actionlib::SimpleClientGoalState action_state_;
 };
 
 }// namespace decision

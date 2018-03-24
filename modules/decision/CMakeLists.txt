@@ -1,5 +1,7 @@
 project(decision)
 
+add_subdirectory(behavior_tree)
+
 file(GLOB ProtoFiles "${CMAKE_CURRENT_SOURCE_DIR}/proto/*.proto")
 rrts_protobuf_generate_cpp(${CMAKE_CURRENT_SOURCE_DIR}/proto DecisionProtoSrc DecisionProtoHds ${ProtoFiles})
 
@@ -15,3 +17,4 @@ target_link_libraries(${PROJECT_NAME}_node
     common::log
     ${catkin_LIBRARIES}
 )
+
