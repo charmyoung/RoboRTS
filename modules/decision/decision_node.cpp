@@ -87,6 +87,7 @@ class DecisionNode{
       patrol_points_[i].push_back(patrol_points.point(i).pitch());
       patrol_points_[i].push_back(patrol_points.point(i).yaw());
     }
+    patrol_points_iter_ = patrol_points_.begin();
     //std::sort(patrol_points_.end(), patrol_points_.begin());
   }
 
@@ -100,7 +101,7 @@ class DecisionNode{
     while(ros::ok()) {
 
       if (new_goal_) {
-
+        patrol_points_iter_--;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                      boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
                      boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
@@ -109,15 +110,16 @@ class DecisionNode{
         new_goal_ = false;
       } else if(!patrol_points_.empty() && decision_state_ == rrts::common::IDLE) {
 
-        std::vector<float> point = patrol_points_.back();
-        patrol_points_.pop_back();
+        if (patrol_points_iter_ == patrol_points_.end()){
+          patrol_points_iter_ = patrol_points_.begin();
+        }
         global_planner_goal_.goal.header.frame_id = "map";
 
-        global_planner_goal_.goal.pose.position.x = point[0];
-        global_planner_goal_.goal.pose.position.y = point[1];
-        global_planner_goal_.goal.pose.position.z = point[2];
+        global_planner_goal_.goal.pose.position.x = (*patrol_points_iter_)[0];
+        global_planner_goal_.goal.pose.position.y = (*patrol_points_iter_)[1];
+        global_planner_goal_.goal.pose.position.z = (*patrol_points_iter_)[2];
 
-        tf::Quaternion quaternion =  tf::createQuaternionFromRPY(point[4], point[5], point[6]);
+        tf::Quaternion quaternion =  tf::createQuaternionFromRPY((*patrol_points_iter_)[4], (*patrol_points_iter_)[5], (*patrol_points_iter_)[6]);
         global_planner_goal_.goal.pose.orientation.w = quaternion.w();
         global_planner_goal_.goal.pose.orientation.x = quaternion.x();
         global_planner_goal_.goal.pose.orientation.y = quaternion.y();
@@ -128,6 +130,7 @@ class DecisionNode{
                                                   boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
         decision_state_ = rrts::common::RUNNING;
+        patrol_points_iter_++;
       }
       if (new_path_) {
 
@@ -136,11 +139,11 @@ class DecisionNode{
 
       }
 
-      actionlib::SimpleClientGoalState action_state=global_planner_actionlib_client_.getState();
-      if(action_state_ !=action_state){
-        action_state_=action_state;
-        std::cout<<"***:"<<action_state_.toString()<<std::endl;
-      }
+//      actionlib::SimpleClientGoalState action_state=global_planner_actionlib_client_.getState();
+//      if(action_state_ !=action_state){
+//        action_state_=action_state;
+//        std::cout<<"***:"<<action_state_.toString()<<std::endl;
+//      }
 
     }
 
@@ -201,6 +204,7 @@ class DecisionNode{
   std::thread thread_;
 
   std::vector<std::vector<float>> patrol_points_;
+  std::vector<std::vector<float>>::iterator patrol_points_iter_;
   rrts::common::NodeState decision_state_;
   actionlib::SimpleClientGoalState action_state_;
 };

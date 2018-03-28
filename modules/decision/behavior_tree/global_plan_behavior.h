@@ -15,12 +15,11 @@ namespace decision{
 
 class GlobalPlannerBehavior: public ActionNode{
  public:
-  GlobalPlannerBehavior(const Blackboard::Ptr &blackboard_ptr):
+  GlobalPlannerBehavior(const Blackboard::Ptr &blackboclard_ptr):
       ActionNode::ActionNode("global_planner_behavior", blackboard_ptr),
       actionlib_client_("global_planner_node_action", true){
-    blackboard_ptr.Setbool("global_planner_behavior",false);
-    actionlib_client_.waitForServer();
-    blackboard_ptr.Setbool("global_planner_behavior",true);
+    ationlib_client_.waitForServer();
+
   }
   virtual ~GlobalPlannerBehavior()= default;
 
@@ -35,7 +34,9 @@ class GlobalPlannerBehavior: public ActionNode{
   };
   virtual BehaviorState Update() {
     while (actionlib_client_.getState() == ) {
-
+  //active ->running
+  //pending -> waiting
+  // done -> success or failure
     }
     return action_state_;
   }
