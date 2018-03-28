@@ -17,6 +17,7 @@
 
 #include <ros/ros.h>
 #include <tf/tf.h>
+#include <tf/transform_listener.h>
 #include <actionlib/client/simple_action_client.h>
 #include <actionlib/client/terminal_state.h>
 #include <thread>
@@ -29,6 +30,7 @@
 #include "common/io.h"
 #include "common/node_state.h"
 #include "modules/decision/proto/decision.pb.h"
+#include "modules/perception/map/costmap/costmap_interface.h"
 
 namespace rrts{
 namespace decision{
@@ -39,12 +41,12 @@ using rrts::common::ErrorInfo;
 class DecisionNode{
  public:
   DecisionNode():global_planner_actionlib_client_("global_planner_node_action", true),
-                        local_planner_actionlib_client_("local_planner_node_action",true),
-                        localization_actionlib_client_("localization_node_action",true),
-                        armor_detection_actionlib_client_("armor_detection_node_action",true),
-                        action_state_(global_planner_actionlib_client_.getState()),
-                        new_goal_(false),new_path_(false),
-                        decision_state_(rrts::common::IDLE){
+                 local_planner_actionlib_client_("local_planner_node_action",true),
+                 localization_actionlib_client_("localization_node_action",true),
+                 armor_detection_actionlib_client_("armor_detection_node_action",true),
+                 action_state_(global_planner_actionlib_client_.getState()),
+                 new_goal_(false),new_path_(false),
+                 decision_state_(rrts::common::IDLE){
     //point mode
     ros::NodeHandle rviz_nh("move_base_simple");
     goal_sub_ = rviz_nh.subscribe<geometry_msgs::PoseStamped>("goal", 1,
@@ -68,6 +70,18 @@ class DecisionNode{
 
     local_planner_actionlib_client_.waitForServer();
     std::cout<<"Local planner module has been connected!"<<std::endl;
+
+    tf_ptr_ = std::make_shared<tf::TransformListener>(ros::Duration(10));
+
+    costmap_ptr_ = std::make_shared<rrts::perception::map::CostmapInterface>("decision_costmap",
+                                                                             *tf_ptr_,
+                                                                             "modules/perception/map/costmap/config/costmap_parameter_config_for_global_plan.prototxt");
+
+
+    gridmap_height_ =costmap_ptr_->GetCostMap()->GetSizeXCell();
+    gridmap_width_ = costmap_ptr_->GetCostMap()->GetSizeYCell();
+    size_ = gridmap_height_*gridmap_width_;
+    charmap_ = costmap_ptr_->GetCostMap()->GetCharMap();
 
     thread_ = std::thread(&DecisionNode::Execution, this);
   }
@@ -98,19 +112,30 @@ class DecisionNode{
   }
 
   void Execution(){
+    //for random generate goal
+    unsigned int goal_index,goal_cell_x,goal_cell_y;
+    geometry_msgs::PoseStamped random_goal;
+    random_goal.pose.orientation.w = 1;
+    random_goal.header.frame_id = "map";
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> uni_dis(0, size_-1);
+
     while(ros::ok()) {
 
       if (new_goal_) {
         patrol_points_iter_--;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
-                     boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
-                     boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
-                     boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1)
+                                                  boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
+                                                  boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
+                                                  boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1)
         );
+        decision_state_ = rrts::common::RUNNING;
         new_goal_ = false;
       } else if(!patrol_points_.empty() && decision_state_ == rrts::common::IDLE) {
 
-        if (patrol_points_iter_ == patrol_points_.end()){
+        if (patrol_points_iter_ == patrol_points_.end()) {
           patrol_points_iter_ = patrol_points_.begin();
         }
         global_planner_goal_.goal.header.frame_id = "map";
@@ -119,7 +144,9 @@ class DecisionNode{
         global_planner_goal_.goal.pose.position.y = (*patrol_points_iter_)[1];
         global_planner_goal_.goal.pose.position.z = (*patrol_points_iter_)[2];
 
-        tf::Quaternion quaternion =  tf::createQuaternionFromRPY((*patrol_points_iter_)[4], (*patrol_points_iter_)[5], (*patrol_points_iter_)[6]);
+        tf::Quaternion quaternion = tf::createQuaternionFromRPY((*patrol_points_iter_)[4],
+                                                                (*patrol_points_iter_)[5],
+                                                                (*patrol_points_iter_)[6]);
         global_planner_goal_.goal.pose.orientation.w = quaternion.w();
         global_planner_goal_.goal.pose.orientation.x = quaternion.x();
         global_planner_goal_.goal.pose.orientation.y = quaternion.y();
@@ -131,6 +158,23 @@ class DecisionNode{
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
         decision_state_ = rrts::common::RUNNING;
         patrol_points_iter_++;
+      } else if(decision_state_ == rrts::common::IDLE){
+
+        while (true) {
+          unsigned int random_index = uni_dis(gen);
+          if (charmap_[random_index] < 240) {
+            goal_index=random_index;
+            break;
+          }
+        }
+        costmap_ptr_->GetCostMap()->Index2Cells(goal_index, goal_cell_x, goal_cell_y);
+        costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, random_goal.pose.position.x, random_goal.pose.position.y);
+        global_planner_goal_.goal=random_goal;
+        global_planner_actionlib_client_.sendGoal(global_planner_goal_,
+                                                  boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
+                                                  boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
+                                                  boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
+        decision_state_ = rrts::common::RUNNING;
       }
       if (new_path_) {
 
@@ -200,9 +244,17 @@ class DecisionNode{
   bool new_goal_;
   bool new_path_;
 
+  std::shared_ptr<tf::TransformListener> tf_ptr_;
+
+  std::shared_ptr<rrts::perception::map::CostmapInterface> costmap_ptr_;
+
+  unsigned int gridmap_height_;
+  unsigned int gridmap_width_;
+  unsigned int size_;
+  unsigned char * charmap_;
+
   ros::Subscriber goal_sub_;
   std::thread thread_;
-
   std::vector<std::vector<float>> patrol_points_;
   std::vector<std::vector<float>>::iterator patrol_points_iter_;
   rrts::common::NodeState decision_state_;

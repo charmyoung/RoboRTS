@@ -9,24 +9,25 @@ add_executable(${PROJECT_NAME}_node
   ${DecisionProtoSrc}
   ${DecisionProtoHds}
   decision_node.cpp
-)
+  )
 
 target_link_libraries(${PROJECT_NAME}_node
   PRIVATE
-    common::io
-    common::log
-    ${catkin_LIBRARIES}
-)
+  common::io
+  common::log
+  perception::map::costmap
+  ${catkin_LIBRARIES}
+  )
 
 add_executable(${PROJECT_NAME}_test
-        decision_test.cpp
-        )
+  decision_test.cpp
+  )
 
 target_link_libraries(${PROJECT_NAME}_test
-        PRIVATE
-        perception::map::costmap
-#        common::io
-#        common::log
-        ${catkin_LIBRARIES}
-        )
+  PRIVATE
+  perception::map::costmap
+  #        common::io
+  #        common::log
+  ${catkin_LIBRARIES}
+  )
 

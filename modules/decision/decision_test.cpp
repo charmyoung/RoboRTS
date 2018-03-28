@@ -27,9 +27,9 @@ int main(int argc, char **argv){
   unsigned char * charmap_ = costmap_ptr_->GetCostMap()->GetCharMap();
 
   unsigned int goal_index,goal_cell_x,goal_cell_y;
-  geometry_msgs::PoseStamped goal_;
-  goal_.pose.orientation.w = 1;
-  goal_.header.frame_id = "map";
+  geometry_msgs::PoseStamped goal;
+  goal.pose.orientation.w = 1;
+  goal.header.frame_id = "map";
 
 
   ros::Rate loop_rate(10);
@@ -37,7 +37,7 @@ int main(int argc, char **argv){
   while (ros::ok()) {
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> uni_dis(0, size_ - 1);
+    std::uniform_int_distribution<int> uni_dis(0, size_-1);
     while (true) {
       unsigned int random_index = uni_dis(gen);
       if (charmap_[random_index] < 240) {
@@ -46,8 +46,8 @@ int main(int argc, char **argv){
       }
     }
     costmap_ptr_->GetCostMap()->Index2Cells(goal_index, goal_cell_x, goal_cell_y);
-    costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, goal_.pose.position.x, goal_.pose.position.y);
-    goal_pub.publish(goal_);
+    costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, goal.pose.position.x, goal.pose.position.y);
+    goal_pub.publish(goal);
     loop_rate.sleep();
   }
 }
