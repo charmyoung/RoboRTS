@@ -167,7 +167,7 @@ function help(){
 
 function default_config(){
 MAP="icra"
-SIMULATION=1
+SIMULATION=0
 }
 
 if [[ $# -eq 0  ]];then
