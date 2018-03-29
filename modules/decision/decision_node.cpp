@@ -40,22 +40,25 @@ namespace decision{
 using rrts::common::ErrorCode;
 using rrts::common::ErrorInfo;
 
-class DecisionNode{
+class DecisionNode {
  public:
-  DecisionNode():global_planner_actionlib_client_("global_planner_node_action", true),
-                 local_planner_actionlib_client_("local_planner_node_action",true),
-                 localization_actionlib_client_("localization_node_action",true),
-                 armor_detection_actionlib_client_("armor_detection_node_action",true),
-                 action_state_(global_planner_actionlib_client_.getState()),
-                 new_goal_(false),new_path_(false),
-                 decision_state_(rrts::common::IDLE){
+  DecisionNode() : global_planner_actionlib_client_("global_planner_node_action", true),
+                   local_planner_actionlib_client_("local_planner_node_action", true),
+                   localization_actionlib_client_("localization_node_action", true),
+                   armor_detection_actionlib_client_("armor_detection_node_action", true),
+                   action_state_(global_planner_actionlib_client_.getState()),
+                   rviz_goal_(false), new_path_(false),random_count_(0),
+                   decision_state_(rrts::common::IDLE) {
     //point mode
     ros::NodeHandle rviz_nh("move_base_simple");
     goal_sub_ = rviz_nh.subscribe<geometry_msgs::PoseStamped>("goal", 1,
-                                                              &DecisionNode::GoalCallback,this);
+                                                              &DecisionNode::GoalCallback, this);
+    ros::NodeHandle nh;
+    random_sub_ = nh.subscribe<geometry_msgs::PointStamped>("clicked_point", 1, &DecisionNode::RandomCallback, this);
+
     LoadParam();
     localization_actionlib_client_.waitForServer();
-    std::cout<<"Localization module has been connected!"<<std::endl;
+    std::cout << "Localization module has been connected!" << std::endl;
     localization_goal_.command = 1;
     localization_actionlib_client_.sendGoal(localization_goal_);
 
@@ -68,10 +71,10 @@ class DecisionNode{
 //                                               boost::bind(&DecisionNode::ArmorDetectionFeedbackCallback, this, _1));
 
     global_planner_actionlib_client_.waitForServer();
-    std::cout<<"Global planner module has been connected!"<<std::endl;
+    std::cout << "Global planner module has been connected!" << std::endl;
 
     local_planner_actionlib_client_.waitForServer();
-    std::cout<<"Local planner module has been connected!"<<std::endl;
+    std::cout << "Local planner module has been connected!" << std::endl;
 
     tf_ptr_ = std::make_shared<tf::TransformListener>(ros::Duration(10));
 
@@ -79,111 +82,136 @@ class DecisionNode{
                                                                              *tf_ptr_,
                                                                              "modules/perception/map/costmap/config/costmap_parameter_config_for_global_plan.prototxt");
 
-
-    gridmap_height_ =costmap_ptr_->GetCostMap()->GetSizeXCell();
-    gridmap_width_ = costmap_ptr_->GetCostMap()->GetSizeYCell();
-    size_ = gridmap_height_*gridmap_width_;
+    gridmap_width_ = costmap_ptr_->GetCostMap()->GetSizeXCell();
+    gridmap_height_ = costmap_ptr_->GetCostMap()->GetSizeYCell();
+    size_ = gridmap_height_ * gridmap_width_;
     charmap_ = costmap_ptr_->GetCostMap()->GetCharMap();
 
     thread_ = std::thread(&DecisionNode::Execution, this);
   }
 
   void LoadParam() {
-    rrts::decision::PatrolPoints patrol_points;
+    rrts::decision::DecisionConfig decision_config;
     std::string file_name = "modules/decision/config/decision.prototxt";
-    rrts::common::ReadProtoFromTextFile(file_name, &patrol_points);
-    unsigned int point_size = patrol_points.point().size();
-    patrol_points_.resize(point_size);
-    for(unsigned int i = 0; i < point_size; i++) {
-      patrol_points_[i].push_back(patrol_points.point(i).x());
-      patrol_points_[i].push_back(patrol_points.point(i).y());
-      patrol_points_[i].push_back(patrol_points.point(i).z());
+    rrts::common::ReadProtoFromTextFile(file_name, &decision_config);
 
-      patrol_points_[i].push_back(patrol_points.point(i).roll());
-      patrol_points_[i].push_back(patrol_points.point(i).pitch());
-      patrol_points_[i].push_back(patrol_points.point(i).yaw());
+    //patrol goal config
+    unsigned int point_size = decision_config.point().size();
+    patrol_goals_.resize(point_size);
+    for (int i = 0; i != point_size; i++) {
+
+      patrol_goals_[i].pose.position.x = decision_config.point(i).x();
+      patrol_goals_[i].pose.position.y = decision_config.point(i).y();
+      patrol_goals_[i].pose.position.z = decision_config.point(i).z();
+
+      tf::Quaternion quaternion = tf::createQuaternionFromRPY(decision_config.point(i).roll(),
+                                                              decision_config.point(i).pitch(),
+                                                              decision_config.point(i).yaw());
+      patrol_goals_[i].pose.orientation.x = quaternion.x();
+      patrol_goals_[i].pose.orientation.y = quaternion.y();
+      patrol_goals_[i].pose.orientation.z = quaternion.z();
+      patrol_goals_[i].pose.orientation.w = quaternion.w();
     }
-    patrol_points_iter_ = patrol_points_.begin();
-    //std::sort(patrol_points_.end(), patrol_points_.begin());
-  }
+    patrol_goals_iter_ = patrol_goals_.begin();
 
+    //random generate goal config
+
+  }
+  void RandomCallback(const geometry_msgs::PointStamped::ConstPtr &point) {
+
+    if (random_count_ % 2 == 0){
+      x1_ = point->point.x;
+      y1_= point->point.y;
+    }else{
+
+      if(x1_<=point->point.x){
+        x2_=point->point.x;
+      }else{
+        x2_=x1_;
+        x1_=point->point.x;
+      }
+      if(y1_<=point->point.y){
+        y2_=point->point.y;
+      }else{
+        y2_=y1_;
+        y1_=point->point.y;
+      }
+    }
+    random_count_++;
+
+  }
   void GoalCallback(const geometry_msgs::PoseStamped::ConstPtr & goal){
     global_planner_goal_.goal = *goal;
 
-    new_goal_ = true;
+    rviz_goal_ = true;
   }
-
-  void Execution(){
-    //for random generate goal
-    unsigned int goal_index,goal_cell_x,goal_cell_y;
-    float goal_yaw;
-    geometry_msgs::PoseStamped random_goal;
-    random_goal.pose.orientation.w = 1;
+  void RandomSample(float x1, float x2, float y1, float y2, geometry_msgs::PoseStamped& random_goal){
     random_goal.header.frame_id = "map";
+    float goal_yaw,goal_x,goal_y;
+    unsigned int goal_cell_x, goal_cell_y;
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> int_uni_dis(0, size_-1);
-    std::uniform_real_distribution<float> float_uni_dis(-3.14f, 3.14f);
+    std::uniform_real_distribution<float> x_uni_dis(x1,x2);
+    std::uniform_real_distribution<float> y_uni_dis(y1,y2);
+    std::uniform_real_distribution<float> yaw_uni_dis(-3.14f, 3.14f);
+
+    while (true) {
+      goal_x = x_uni_dis(gen);
+      goal_y = y_uni_dis(gen);
+      costmap_ptr_->GetCostMap()->World2Map(goal_x,
+                                            goal_y,
+                                            goal_cell_x,
+                                            goal_cell_y);
+      unsigned int goal_index = costmap_ptr_->GetCostMap()->GetIndex(goal_cell_x, goal_cell_y);
+      if (charmap_[goal_index] < 240) {
+        break;
+      }
+    }
+    goal_yaw = yaw_uni_dis(gen);
+    tf::Quaternion quaternion = tf::createQuaternionFromRPY(0,0,goal_yaw);
+//        costmap_ptr_->GetCostMap()->Index2Cells(goal_index, goal_cell_x, goal_cell_y);
+//        costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, random_goal.pose.position.x, random_goal.pose.position.y);
+    random_goal.pose.position.x = goal_x;
+    random_goal.pose.position.y = goal_y;
+    random_goal.pose.orientation.w = quaternion.w();
+    random_goal.pose.orientation.x = quaternion.x();
+    random_goal.pose.orientation.y = quaternion.y();
+    random_goal.pose.orientation.z = quaternion.z();
+  }
+  void Execution(){
+
 
     while(ros::ok()) {
       // 1. rviz mark nav goal
-      if (new_goal_) {
-        patrol_points_iter_--;
+      if (rviz_goal_) {
+//        patrol_goals_iter_--;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                                                   boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
                                                   boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1)
         );
         decision_state_ = rrts::common::RUNNING;
-        new_goal_ = false;
-      } // 2. patrol points read from proto.txt file
-      else if(!patrol_points_.empty() && decision_state_ == rrts::common::IDLE) {
+        rviz_goal_ = false;
 
-        if (patrol_points_iter_ == patrol_points_.end()) {
-          patrol_points_iter_ = patrol_points_.begin();
+      } // 2. patrol points read from proto.txt file
+      else if(!patrol_goals_.empty() && decision_state_ == rrts::common::IDLE) {
+
+        if (patrol_goals_iter_ == patrol_goals_.end()) {
+          patrol_goals_iter_ = patrol_goals_.begin();
         }
         global_planner_goal_.goal.header.frame_id = "map";
-
-        global_planner_goal_.goal.pose.position.x = (*patrol_points_iter_)[0];
-        global_planner_goal_.goal.pose.position.y = (*patrol_points_iter_)[1];
-        global_planner_goal_.goal.pose.position.z = (*patrol_points_iter_)[2];
-
-        tf::Quaternion quaternion = tf::createQuaternionFromRPY((*patrol_points_iter_)[4],
-                                                                (*patrol_points_iter_)[5],
-                                                                (*patrol_points_iter_)[6]);
-        global_planner_goal_.goal.pose.orientation.w = quaternion.w();
-        global_planner_goal_.goal.pose.orientation.x = quaternion.x();
-        global_planner_goal_.goal.pose.orientation.y = quaternion.y();
-        global_planner_goal_.goal.pose.orientation.z = quaternion.z();
-
+        global_planner_goal_.goal=*patrol_goals_iter_;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                                                   boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
                                                   boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
         decision_state_ = rrts::common::RUNNING;
-        patrol_points_iter_++;
+        patrol_goals_iter_++;
       } //3. random generate valid goal
-      else if(false && decision_state_ == rrts::common::IDLE) {
+      else if(random_count_!=0 && random_count_%2 == 0 && decision_state_ == rrts::common::IDLE) {
 
-        while (true) {
-          unsigned int random_index = int_uni_dis(gen);
-          if (charmap_[random_index] < 240) {
-            goal_index=random_index;
-            break;
-          }
-        }
-        goal_yaw = float_uni_dis(gen);
-        tf::Quaternion quaternion = tf::createQuaternionFromRPY(0,0,goal_yaw);
-        costmap_ptr_->GetCostMap()->Index2Cells(goal_index, goal_cell_x, goal_cell_y);
-        costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, random_goal.pose.position.x, random_goal.pose.position.y);
-
-        random_goal.pose.orientation.w = quaternion.w();
-        random_goal.pose.orientation.x = quaternion.x();
-        random_goal.pose.orientation.y = quaternion.y();
-        random_goal.pose.orientation.z = quaternion.z();
-
-        global_planner_goal_.goal=random_goal;
+        RandomSample(x1_,x2_,y1_,y2_,global_planner_goal_.goal);
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                                                   boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
                                                   boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
@@ -256,24 +284,30 @@ class DecisionNode{
   messages::GlobalPlannerGoal global_planner_goal_;
   messages::LocalPlannerGoal local_planner_goal_;
 
-  bool new_goal_;
+  bool rviz_goal_;
   bool new_path_;
-
+  std::thread thread_;
+  rrts::common::NodeState decision_state_;
+  //! costmap
   std::shared_ptr<tf::TransformListener> tf_ptr_;
-
   std::shared_ptr<rrts::perception::map::CostmapInterface> costmap_ptr_;
-
   unsigned int gridmap_height_;
   unsigned int gridmap_width_;
   unsigned int size_;
   unsigned char * charmap_;
 
   ros::Subscriber goal_sub_;
-  std::thread thread_;
-  std::vector<std::vector<float>> patrol_points_;
-  std::vector<std::vector<float>>::iterator patrol_points_iter_;
-  rrts::common::NodeState decision_state_;
-  actionlib::SimpleClientGoalState action_state_;
+
+  std::vector<geometry_msgs::PoseStamped> patrol_goals_;
+  std::vector<geometry_msgs::PoseStamped>::iterator patrol_goals_iter_;
+
+  //random generate goal
+  ros::Subscriber random_sub_;
+  unsigned int random_count_;
+  float x1_,x2_,y1_,y2_;
+
+
+  actionlib::SimpleClientGoalState action_state_;//for test.
 };
 
 }// namespace decision
