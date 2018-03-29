@@ -28,7 +28,9 @@
 
 #include "common/error_code.h"
 #include "common/io.h"
+#include "common/log.h"
 #include "common/node_state.h"
+
 #include "modules/decision/proto/decision.pb.h"
 #include "modules/perception/map/costmap/costmap_interface.h"
 
@@ -114,16 +116,18 @@ class DecisionNode{
   void Execution(){
     //for random generate goal
     unsigned int goal_index,goal_cell_x,goal_cell_y;
+    float goal_yaw;
     geometry_msgs::PoseStamped random_goal;
     random_goal.pose.orientation.w = 1;
     random_goal.header.frame_id = "map";
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> uni_dis(0, size_-1);
+    std::uniform_int_distribution<int> int_uni_dis(0, size_-1);
+    std::uniform_real_distribution<float> float_uni_dis(-3.14f, 3.14f);
 
     while(ros::ok()) {
-
+      // 1. rviz mark nav goal
       if (new_goal_) {
         patrol_points_iter_--;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
@@ -133,7 +137,8 @@ class DecisionNode{
         );
         decision_state_ = rrts::common::RUNNING;
         new_goal_ = false;
-      } else if(!patrol_points_.empty() && decision_state_ == rrts::common::IDLE) {
+      } // 2. patrol points read from proto.txt file
+      else if(!patrol_points_.empty() && decision_state_ == rrts::common::IDLE) {
 
         if (patrol_points_iter_ == patrol_points_.end()) {
           patrol_points_iter_ = patrol_points_.begin();
@@ -158,17 +163,26 @@ class DecisionNode{
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
         decision_state_ = rrts::common::RUNNING;
         patrol_points_iter_++;
-      } else if(decision_state_ == rrts::common::IDLE){
+      } //3. random generate valid goal
+      else if(false && decision_state_ == rrts::common::IDLE) {
 
         while (true) {
-          unsigned int random_index = uni_dis(gen);
+          unsigned int random_index = int_uni_dis(gen);
           if (charmap_[random_index] < 240) {
             goal_index=random_index;
             break;
           }
         }
+        goal_yaw = float_uni_dis(gen);
+        tf::Quaternion quaternion = tf::createQuaternionFromRPY(0,0,goal_yaw);
         costmap_ptr_->GetCostMap()->Index2Cells(goal_index, goal_cell_x, goal_cell_y);
         costmap_ptr_->GetCostMap()->Map2World(goal_cell_x, goal_cell_y, random_goal.pose.position.x, random_goal.pose.position.y);
+
+        random_goal.pose.orientation.w = quaternion.w();
+        random_goal.pose.orientation.x = quaternion.x();
+        random_goal.pose.orientation.y = quaternion.y();
+        random_goal.pose.orientation.z = quaternion.z();
+
         global_planner_goal_.goal=random_goal;
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                                                   boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
@@ -176,6 +190,7 @@ class DecisionNode{
                                                   boost::bind(&DecisionNode::GlobalPlannerFeedbackCallback, this, _1));
         decision_state_ = rrts::common::RUNNING;
       }
+      //local goal
       if (new_path_) {
 
         local_planner_actionlib_client_.sendGoal(local_planner_goal_);
@@ -199,7 +214,7 @@ class DecisionNode{
     decision_state_ = rrts::common::IDLE;
   }
   void GlobalPlannerActiveCallback(){
-    std::cout<<"Global planner server has recived the goal!"<<std::endl;
+    LOG_INFO<<"Global planner server has recived the goal!";
   }
   void GlobalPlannerFeedbackCallback(const messages::GlobalPlannerFeedbackConstPtr& feedback){
     if (feedback->error_code != ErrorCode::OK) {

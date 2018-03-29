@@ -31,8 +31,7 @@ int main(int argc, char **argv){
   goal.pose.orientation.w = 1;
   goal.header.frame_id = "map";
 
-
-  ros::Rate loop_rate(10);
+  ros::Rate loop_rate(50);
 
   while (ros::ok()) {
     std::random_device rd;
