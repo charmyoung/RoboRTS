@@ -181,11 +181,10 @@ class DecisionNode {
   }
   void Execution(){
 
-
     while(ros::ok()) {
       // 1. rviz mark nav goal
       if (rviz_goal_) {
-//        patrol_goals_iter_--;
+
         global_planner_actionlib_client_.sendGoal(global_planner_goal_,
                                                   boost::bind(&DecisionNode::GlobalPlannerDoneCallback, this, _1, _2),
                                                   boost::bind(&DecisionNode::GlobalPlannerActiveCallback, this),
@@ -253,7 +252,6 @@ class DecisionNode {
       new_path_=true;
     }
   }
-
   // Armor Detection
   void ArmorDetectionFeedbackCallback(const messages::ArmorDetectionFeedbackConstPtr& feedback){
     if (feedback->error_code != ErrorCode::OK) {
